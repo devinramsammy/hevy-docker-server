@@ -1,0 +1,16 @@
+services:
+  api:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      DB_PATH: /data/hevy.db
+      HEVY_API_KEY: ${HEVY_API_KEY:-}
+      WEBHOOK_AUTH_TOKEN: ${WEBHOOK_AUTH_TOKEN:-}
+    volumes:
+      - sqlite-data:/data
+    restart: unless-stopped
+
+volumes:
+  sqlite-data:
