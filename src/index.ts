@@ -1,4 +1,5 @@
 import express from "express";
+import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import Database from "better-sqlite3";
 import fs from "node:fs";
@@ -171,6 +172,10 @@ const storeWorkouts = db.transaction((workouts: HevyWorkout[]) => {
 
 const app = express();
 app.set("trust proxy", 1);
+
+app.use(
+  morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"),
+);
 
 const windowMs = 15 * 60 * 1000;
 const maxPerIp = Number(process.env.RATE_LIMIT_MAX_PER_IP) || 300;
