@@ -1,4 +1,5 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
@@ -169,6 +170,20 @@ const storeWorkouts = db.transaction((workouts: HevyWorkout[]) => {
 });
 
 const app = express();
+app.set("trust proxy", 1);
+
+const windowMs = 15 * 60 * 1000;
+const maxPerIp = Number(process.env.RATE_LIMIT_MAX_PER_IP) || 300;
+
+app.use(
+  rateLimit({
+    windowMs,
+    limit: maxPerIp,
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
+
 app.use(express.json({ limit: "2mb" }));
 
 function requireHevyApiKey(): string {

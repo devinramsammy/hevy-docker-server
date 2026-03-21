@@ -33,6 +33,7 @@ The app reads these environment variables:
 | `DB_PATH`            | No                      | `./data/hevy.db` | Path to the SQLite database file                    |
 | `HEVY_API_KEY`       | Required for `/sync`    | empty            | Hevy API key sent as the `api-key` request header   |
 | `WEBHOOK_AUTH_TOKEN` | Required for `/webhook` | empty            | Bearer token required in the `Authorization` header |
+| `RATE_LIMIT_MAX_PER_IP` | No                   | `300`            | Max requests per client IP per 15 minutes (all routes) |
 
 Example `.env`:
 
