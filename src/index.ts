@@ -283,11 +283,7 @@ function getWebhookWorkoutId(body: unknown): string {
   return workoutId;
 }
 
-/**
- * Hevy sends the webhook secret as the full `Authorization` header value, or as
- * `Bearer <token>`. Accept both so the value matches what you set in Hevy and in
- * `WEBHOOK_AUTH_TOKEN`.
- */
+
 function getAuthorizationSecret(headerValue: string | undefined): string | null {
   if (!headerValue?.trim()) {
     return null;
@@ -391,7 +387,7 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
   try {
     const expectedToken = requireWebhookAuthToken();
     const providedToken = getAuthorizationSecret(req.get("authorization"));
@@ -402,17 +398,28 @@ app.post("/webhook", async (req, res) => {
     }
 
     const workoutId = getWebhookWorkoutId(req.body);
-    const workout = await syncWorkoutByIdFromHevy(workoutId);
 
     res.status(200).json({
       ok: true,
-      workout_id: workout.id,
+      accepted: true,
+      workout_id: workoutId,
+    });
+
+    void syncWorkoutByIdFromHevy(workoutId).catch((error) => {
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Unknown error during webhook sync";
+      console.error(
+        `[webhook] background sync failed workoutId=${workoutId}:`,
+        message,
+      );
     });
   } catch (error) {
     const message =
       error instanceof Error
         ? error.message
-        : "Unknown error during webhook sync";
+        : "Unknown error during webhook validation";
     res.status(500).json({ ok: false, error: message });
   }
 });

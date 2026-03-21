@@ -27,13 +27,13 @@ Reference: [Hevy workout API docs](https://api.hevyapp.com/docs/#/Workouts/get_v
 
 The app reads these environment variables:
 
-| Variable             | Required                | Default          | Purpose                                             |
-| -------------------- | ----------------------- | ---------------- | --------------------------------------------------- |
-| `PORT`               | No                      | `3000`           | HTTP port for the Express server                    |
-| `DB_PATH`            | No                      | `./data/hevy.db` | Path to the SQLite database file                    |
-| `HEVY_API_KEY`       | Required for `/sync`    | empty            | Hevy API key sent as the `api-key` request header   |
-| `WEBHOOK_AUTH_TOKEN` | Required for `/webhook` | empty            | Must match Hevy’s “authorization header” value; sent as `Authorization: <token>` or `Authorization: Bearer <token>` |
-| `RATE_LIMIT_MAX_PER_IP` | No                   | `300`            | Max requests per client IP per 15 minutes (all routes) |
+| Variable                | Required                | Default          | Purpose                                                                                                             |
+| ----------------------- | ----------------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `PORT`                  | No                      | `3000`           | HTTP port for the Express server                                                                                    |
+| `DB_PATH`               | No                      | `./data/hevy.db` | Path to the SQLite database file                                                                                    |
+| `HEVY_API_KEY`          | Required for `/sync`    | empty            | Hevy API key sent as the `api-key` request header                                                                   |
+| `WEBHOOK_AUTH_TOKEN`    | Required for `/webhook` | empty            | Must match Hevy’s “authorization header” value; sent as `Authorization: <token>` or `Authorization: Bearer <token>` |
+| `RATE_LIMIT_MAX_PER_IP` | No                      | `300`            | Max requests per client IP per 15 minutes (all routes)                                                              |
 
 Example `.env`:
 
@@ -159,7 +159,7 @@ Example response shape:
 
 ### `POST /webhook`
 
-Accepts a Hevy webhook payload containing a `workoutId`, fetches that workout from Hevy, and upserts it into the local `workouts`, `exercises`, and `sets` tables. Set the same string in Hevy’s webhook “authorization header” field and in `WEBHOOK_AUTH_TOKEN` (Hevy typically sends it as the raw `Authorization` header value, not necessarily prefixed with `Bearer`).
+Accepts a Hevy webhook payload containing a `workoutId`. After auth and validation it responds **immediately** with `200 OK`, then fetches that workout from Hevy and upserts it into the local `workouts`, `exercises`, and `sets` tables in the background. If the background sync fails, the error is logged server-side (`[webhook] background sync failed …`). Set the same string in Hevy’s webhook “authorization header” field and in `WEBHOOK_AUTH_TOKEN`.
 
 ```bash
 curl -X POST http://localhost:3000/webhook \
@@ -179,6 +179,7 @@ Example success response:
 ```json
 {
   "ok": true,
+  "accepted": true,
   "workout_id": "f1085cdb-32b2-4003-967d-53a3af8eaecb"
 }
 ```
