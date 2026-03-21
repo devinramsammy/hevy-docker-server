@@ -283,18 +283,30 @@ function getWebhookWorkoutId(body: unknown): string {
   return workoutId;
 }
 
-function getBearerToken(headerValue: string | undefined): string | null {
-  if (!headerValue) {
+/**
+ * Hevy sends the webhook secret as the full `Authorization` header value, or as
+ * `Bearer <token>`. Accept both so the value matches what you set in Hevy and in
+ * `WEBHOOK_AUTH_TOKEN`.
+ */
+function getAuthorizationSecret(headerValue: string | undefined): string | null {
+  if (!headerValue?.trim()) {
     return null;
   }
 
-  const [scheme, token, ...rest] = headerValue.trim().split(/\s+/);
+  const parts = headerValue.trim().split(/\s+/);
 
-  if (scheme !== "Bearer" || !token || rest.length > 0) {
-    return null;
+  if (parts[0] === "Bearer") {
+    if (parts.length < 2) {
+      return null;
+    }
+    return parts.slice(1).join(" ");
   }
 
-  return token;
+  if (parts.length === 1) {
+    return parts[0] ?? null;
+  }
+
+  return null;
 }
 
 async function syncWorkoutsFromHevy() {
@@ -382,7 +394,7 @@ app.get("/health", (_req, res) => {
 app.post("/webhook", async (req, res) => {
   try {
     const expectedToken = requireWebhookAuthToken();
-    const providedToken = getBearerToken(req.get("authorization"));
+    const providedToken = getAuthorizationSecret(req.get("authorization"));
 
     if (providedToken !== expectedToken) {
       res.status(401).json({ ok: false, error: "Unauthorized" });
