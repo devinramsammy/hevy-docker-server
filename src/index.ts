@@ -101,6 +101,15 @@ db.exec(`
     reps INTEGER,
     FOREIGN KEY (exercise_id) REFERENCES exercises(id) ON DELETE CASCADE
   );
+
+  CREATE INDEX IF NOT EXISTS idx_workouts_time
+    ON workouts(start_time DESC, created_at DESC);
+
+  CREATE INDEX IF NOT EXISTS idx_exercises_title
+    ON exercises(title COLLATE NOCASE);
+
+  CREATE INDEX IF NOT EXISTS idx_exercises_workout
+    ON exercises(workout_id);
 `);
 
 const upsertWorkout = db.prepare(`
@@ -141,6 +150,50 @@ const listStoredSets = db.prepare(`
   FROM sets
   ORDER BY exercise_id ASC, set_index ASC
 `);
+
+const getLatestWorkoutRow = db.prepare(`
+  SELECT id, title, start_time, end_time, created_at, updated_at
+  FROM workouts
+  ORDER BY start_time DESC, created_at DESC, id DESC
+  LIMIT 1
+`);
+
+const listExercisesForWorkout = db.prepare(`
+  SELECT id, workout_id, exercise_index, title
+  FROM exercises
+  WHERE workout_id = ?
+  ORDER BY exercise_index ASC, id ASC
+`);
+
+const listSetsForWorkout = db.prepare(`
+  SELECT s.exercise_id, s.set_index, s.weight_kg, s.reps
+  FROM sets s
+  JOIN exercises e ON s.exercise_id = e.id
+  WHERE e.workout_id = ?
+  ORDER BY s.exercise_id ASC, s.set_index ASC
+`);
+
+type ExerciseSessionRow = {
+  workout_id: string;
+  workout_title: string;
+  date: string | null;
+  exercise_id: number;
+  exercise_title: string;
+};
+
+const listExerciseSessionsByTitle = db.prepare(`
+  SELECT w.id AS workout_id,
+         w.title AS workout_title,
+         COALESCE(w.start_time, w.created_at) AS date,
+         e.id AS exercise_id,
+         e.title AS exercise_title
+  FROM exercises e
+  JOIN workouts w ON e.workout_id = w.id
+  WHERE e.title = ? COLLATE NOCASE
+  ORDER BY COALESCE(w.start_time, w.created_at) DESC
+  LIMIT ?
+`);
+
 
 const storeWorkouts = db.transaction((workouts: HevyWorkout[]) => {
   for (const workout of workouts) {
@@ -347,40 +400,104 @@ async function syncWorkoutByIdFromHevy(workoutId: string) {
   return workout;
 }
 
+function groupSetsByExerciseId(sets: SetRow[]): Map<number, SetRow[]> {
+  const map = new Map<number, SetRow[]>();
+  for (const set of sets) {
+    const existing = map.get(set.exercise_id) ?? [];
+    existing.push(set);
+    map.set(set.exercise_id, existing);
+  }
+  return map;
+}
+
+type ExerciseWithSets = ExerciseRow & {
+  sets: Array<{
+    set_index: number;
+    weight_kg: number | null;
+    reps: number | null;
+  }>;
+};
+
+function nestExercisesWithSets(
+  exercises: ExerciseRow[],
+  setsByExerciseId: Map<number, SetRow[]>,
+): ExerciseWithSets[] {
+  return exercises.map((exercise) => ({
+    ...exercise,
+    sets: (setsByExerciseId.get(exercise.id) ?? []).map((set) => ({
+      set_index: set.set_index,
+      weight_kg: set.weight_kg,
+      reps: set.reps,
+    })),
+  }));
+}
+
+function getSetsForExerciseIds(exerciseIds: number[]): SetRow[] {
+  if (exerciseIds.length === 0) {
+    return [];
+  }
+  const placeholders = exerciseIds.map(() => "?").join(", ");
+  const stmt = db.prepare(`
+    SELECT exercise_id, set_index, weight_kg, reps
+    FROM sets
+    WHERE exercise_id IN (${placeholders})
+    ORDER BY exercise_id ASC, set_index ASC
+  `);
+  return stmt.all(...exerciseIds) as SetRow[];
+}
+
 function buildWorkoutResponse() {
   const workouts = listStoredWorkouts.all() as WorkoutRow[];
   const exercises = listStoredExercises.all() as ExerciseRow[];
   const sets = listStoredSets.all() as SetRow[];
 
-  const setsByExerciseId = new Map<number, SetRow[]>();
-  for (const set of sets) {
-    const existing = setsByExerciseId.get(set.exercise_id) ?? [];
-    existing.push(set);
-    setsByExerciseId.set(set.exercise_id, existing);
-  }
+  const setsByExerciseId = groupSetsByExerciseId(sets);
 
-  const exercisesByWorkoutId = new Map<
-    string,
-    Array<ExerciseRow & { sets: Array<Omit<SetRow, "exercise_id">> }>
-  >();
+  const exercisesByWorkoutId = new Map<string, ExerciseRow[]>();
 
   for (const exercise of exercises) {
     const existing = exercisesByWorkoutId.get(exercise.workout_id) ?? [];
-    existing.push({
-      ...exercise,
-      sets: (setsByExerciseId.get(exercise.id) ?? []).map((set) => ({
-        set_index: set.set_index,
-        weight_kg: set.weight_kg,
-        reps: set.reps,
-      })),
-    });
+    existing.push(exercise);
     exercisesByWorkoutId.set(exercise.workout_id, existing);
   }
 
   return workouts.map((workout) => ({
     ...workout,
-    exercises: exercisesByWorkoutId.get(workout.id) ?? [],
+    exercises: nestExercisesWithSets(
+      exercisesByWorkoutId.get(workout.id) ?? [],
+      setsByExerciseId,
+    ),
   }));
+}
+
+function buildLatestWorkoutResponse(): (WorkoutRow & { exercises: ExerciseWithSets[] }) | null {
+  const workout = getLatestWorkoutRow.get() as WorkoutRow | undefined;
+  if (!workout) {
+    return null;
+  }
+  const exercises = listExercisesForWorkout.all(workout.id) as ExerciseRow[];
+  const sets = listSetsForWorkout.all(workout.id) as SetRow[];
+  const setsByExerciseId = groupSetsByExerciseId(sets);
+  return {
+    ...workout,
+    exercises: nestExercisesWithSets(exercises, setsByExerciseId),
+  };
+}
+
+function parseHistoryLimit(raw: unknown): number {
+  if (raw === undefined || raw === null || raw === "") {
+    return 5;
+  }
+  const value =
+    typeof raw === "string"
+      ? Number.parseInt(raw, 10)
+      : typeof raw === "number"
+        ? raw
+        : Number.NaN;
+  if (!Number.isFinite(value) || value < 1) {
+    return 5;
+  }
+  return Math.min(20, Math.floor(value));
 }
 
 app.get("/health", (_req, res) => {
@@ -433,6 +550,47 @@ app.post("/sync", async (_req, res) => {
       error instanceof Error ? error.message : "Unknown error during sync";
     res.status(500).json({ ok: false, error: message });
   }
+});
+
+app.get("/workouts/latest", (_req, res) => {
+  const workout = buildLatestWorkoutResponse();
+  if (!workout) {
+    res.status(404).json({ ok: false, error: "No workouts found" });
+    return;
+  }
+  res.json(workout);
+});
+
+app.get("/exercises/:title/history", (req, res) => {
+  const title = req.params.title ?? "";
+  const limitRaw = req.query.limit;
+  const limitParam = Array.isArray(limitRaw) ? limitRaw[0] : limitRaw;
+  const limit = parseHistoryLimit(limitParam);
+
+  const rows = listExerciseSessionsByTitle.all(
+    title,
+    limit,
+  ) as ExerciseSessionRow[];
+
+  const exerciseIds = rows.map((row) => row.exercise_id);
+  const sets = getSetsForExerciseIds(exerciseIds);
+  const setsByExerciseId = groupSetsByExerciseId(sets);
+
+  const sessions = rows.map((row) => ({
+    workout_id: row.workout_id,
+    workout_title: row.workout_title,
+    date: row.date,
+    sets: (setsByExerciseId.get(row.exercise_id) ?? []).map((set) => ({
+      set_index: set.set_index,
+      weight_kg: set.weight_kg,
+      reps: set.reps,
+    })),
+  }));
+
+  res.json({
+    exercise: rows.length > 0 ? rows[0].exercise_title : title,
+    sessions,
+  });
 });
 
 app.get("/workouts", (_req, res) => {

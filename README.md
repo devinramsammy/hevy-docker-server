@@ -117,9 +117,97 @@ Failure response:
 }
 ```
 
+### `GET /workouts/latest`
+
+Returns the **single most recent** workout from the local database, with the same nested shape as one element of `GET /workouts` `items` (exercises and sets included). Ordering matches “latest”: `start_time` descending, then `created_at` descending, then `id` descending.
+
+Example:
+
+```bash
+curl http://localhost:3000/workouts/latest
+```
+
+Example response shape (one workout object, not wrapped in `items`):
+
+```json
+{
+  "id": "b459cba5-cd6d-463c-abd6-54f8eafcadcb",
+  "title": "Morning Workout",
+  "start_time": "2021-09-14T12:00:00Z",
+  "end_time": "2021-09-14T13:00:00Z",
+  "created_at": "2021-09-14T12:00:00Z",
+  "updated_at": "2021-09-14T13:05:00Z",
+  "exercises": [
+    {
+      "id": 1,
+      "workout_id": "b459cba5-cd6d-463c-abd6-54f8eafcadcb",
+      "exercise_index": 0,
+      "title": "Bench Press (Barbell)",
+      "sets": [
+        {
+          "set_index": 0,
+          "weight_kg": 100,
+          "reps": 10
+        }
+      ]
+    }
+  ]
+}
+```
+
+If the database has no workouts:
+
+```json
+{
+  "ok": false,
+  "error": "No workouts found"
+}
+```
+
+(Response status **404**.)
+
+### `GET /exercises/:title/history`
+
+Returns up to **N** recent **workout sessions** in which an exercise with the given **title** appeared, **newest first**. The `:title` path segment should be URL-encoded (e.g. spaces as `%20`). Matching is **case-insensitive**.
+
+Query parameters:
+
+| Parameter | Default | Max  | Description                                                           |
+| --------- | ------- | ---- | --------------------------------------------------------------------- |
+| `limit`   | `5`     | `20` | How many sessions to return (invalid values fall back to the default) |
+
+Date/time for each session is `COALESCE(start_time, created_at)` from the workout row. Timestamps are returned as stored (typically ISO 8601 strings).
+
+Example:
+
+```bash
+curl "http://localhost:3000/exercises/Bench%20Press%20%28Barbell%29/history?limit=10"
+```
+
+Example response:
+
+```json
+{
+  "exercise": "Bench Press (Barbell)",
+  "sessions": [
+    {
+      "workout_id": "b459cba5-cd6d-463c-abd6-54f8eafcadcb",
+      "workout_title": "Morning Workout",
+      "date": "2021-09-14T12:00:00Z",
+      "sets": [
+        { "set_index": 0, "weight_kg": 100, "reps": 10 },
+        { "set_index": 1, "weight_kg": 100, "reps": 8 }
+      ]
+    }
+  ]
+}
+```
+
+The `exercise` field uses the title as stored in the database when there is at least one session; if the exercise has never been recorded, `sessions` is `[]` and `exercise` is the requested title (**200 OK**).
+
 ### `GET /workouts`
 
-Returns workouts from the local SQLite database with nested exercises and sets.
+Returns **all** workouts from the local SQLite database with nested exercises and sets.
 
 Example:
 
