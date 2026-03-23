@@ -16,7 +16,11 @@ const DB_PATH =
   process.env.DB_PATH ?? path.join(process.cwd(), "data", "hevy.db");
 const HEVY_API_KEY = process.env.HEVY_API_KEY ?? "";
 const WEBHOOK_AUTH_TOKEN = process.env.WEBHOOK_AUTH_TOKEN ?? "";
+const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL ?? "";
 const HEVY_API_BASE_URL = "https://api.hevyapp.com/v1";
+
+const DISCORD_SYNC_COMPLETE_MESSAGE =
+  "use the hevy-workout-analysis skill and analyze my last workout";
 
 type HevySet = {
   index: number;
@@ -194,7 +198,6 @@ const listExerciseSessionsByTitle = db.prepare(`
   LIMIT ?
 `);
 
-
 const storeWorkouts = db.transaction((workouts: HevyWorkout[]) => {
   for (const workout of workouts) {
     upsertWorkout.run({
@@ -226,9 +229,7 @@ const storeWorkouts = db.transaction((workouts: HevyWorkout[]) => {
 const app = express();
 app.set("trust proxy", 1);
 
-app.use(
-  morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"),
-);
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 
 const windowMs = 15 * 60 * 1000;
 const maxPerIp = Number(process.env.RATE_LIMIT_MAX_PER_IP) || 300;
@@ -336,8 +337,9 @@ function getWebhookWorkoutId(body: unknown): string {
   return workoutId;
 }
 
-
-function getAuthorizationSecret(headerValue: string | undefined): string | null {
+function getAuthorizationSecret(
+  headerValue: string | undefined,
+): string | null {
   if (!headerValue?.trim()) {
     return null;
   }
@@ -398,6 +400,25 @@ async function syncWorkoutByIdFromHevy(workoutId: string) {
   const workout = getWorkoutFromResponse(response);
   storeWorkouts([workout]);
   return workout;
+}
+
+async function postDiscordWebhookMessage(content: string): Promise<void> {
+  if (!DISCORD_WEBHOOK_URL || DISCORD_WEBHOOK_URL.trim() === "") {
+    return;
+  }
+
+  const response = await fetch(DISCORD_WEBHOOK_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(
+      `Discord webhook failed (${response.status}): ${text.slice(0, 500)}`,
+    );
+  }
 }
 
 function groupSetsByExerciseId(sets: SetRow[]): Map<number, SetRow[]> {
@@ -470,7 +491,9 @@ function buildWorkoutResponse() {
   }));
 }
 
-function buildLatestWorkoutResponse(): (WorkoutRow & { exercises: ExerciseWithSets[] }) | null {
+function buildLatestWorkoutResponse():
+  | (WorkoutRow & { exercises: ExerciseWithSets[] })
+  | null {
   const workout = getLatestWorkoutRow.get() as WorkoutRow | undefined;
   if (!workout) {
     return null;
@@ -522,16 +545,31 @@ app.post("/webhook", (req, res) => {
       workout_id: workoutId,
     });
 
-    void syncWorkoutByIdFromHevy(workoutId).catch((error) => {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Unknown error during webhook sync";
-      console.error(
-        `[webhook] background sync failed workoutId=${workoutId}:`,
-        message,
-      );
-    });
+    void syncWorkoutByIdFromHevy(workoutId)
+      .then(() =>
+        postDiscordWebhookMessage(DISCORD_SYNC_COMPLETE_MESSAGE).catch(
+          (discordError) => {
+            const discordMessage =
+              discordError instanceof Error
+                ? discordError.message
+                : "Unknown error posting to Discord";
+            console.error(
+              `[webhook] Discord notify failed workoutId=${workoutId}:`,
+              discordMessage,
+            );
+          },
+        ),
+      )
+      .catch((error) => {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Unknown error during webhook sync";
+        console.error(
+          `[webhook] background sync failed workoutId=${workoutId}:`,
+          message,
+        );
+      });
   } catch (error) {
     const message =
       error instanceof Error

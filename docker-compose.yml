@@ -8,6 +8,7 @@ services:
       DB_PATH: /data/hevy.db
       HEVY_API_KEY: ${HEVY_API_KEY:-}
       WEBHOOK_AUTH_TOKEN: ${WEBHOOK_AUTH_TOKEN:-}
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
     volumes:
       - sqlite-data:/data
     restart: unless-stopped

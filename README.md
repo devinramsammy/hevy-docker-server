@@ -33,6 +33,7 @@ The app reads these environment variables:
 | `DB_PATH`               | No                      | `./data/hevy.db` | Path to the SQLite database file                                                                                    |
 | `HEVY_API_KEY`          | Required for `/sync`    | empty            | Hevy API key sent as the `api-key` request header                                                                   |
 | `WEBHOOK_AUTH_TOKEN`    | Required for `/webhook` | empty            | Must match Hevy’s “authorization header” value; sent as `Authorization: <token>` or `Authorization: Bearer <token>` |
+| `DISCORD_WEBHOOK_URL`   | No                      | empty            | If set, after a successful `/webhook` background sync the server POSTs a message to Discord                         |
 | `RATE_LIMIT_MAX_PER_IP` | No                      | `300`            | Max requests per client IP per 15 minutes (all routes)                                                              |
 
 Example `.env`:
@@ -42,6 +43,7 @@ HEVY_API_KEY=your_hevy_api_key_here
 WEBHOOK_AUTH_TOKEN=hevy-webhook-token
 # Optional
 RATE_LIMIT_MAX_PER_IP=300
+# DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 ```
 
 ## Running
@@ -250,6 +252,12 @@ Example response shape:
 ### `POST /webhook`
 
 Accepts a Hevy webhook payload containing a `workoutId`. After auth and validation it responds **immediately** with `200 OK`, then fetches that workout from Hevy and upserts it into the local `workouts`, `exercises`, and `sets` tables in the background. If the background sync fails, the error is logged server-side (`[webhook] background sync failed …`). Set the same string in Hevy’s webhook “authorization header” field and in `WEBHOOK_AUTH_TOKEN`.
+
+**Discord notification (optional):** If `DISCORD_WEBHOOK_URL` is set to a webhook, the server sends a background request after the Hevy sync **succeeds**: a `POST` to that URL with JSON body `{ "content": "…" }` (Discord’s webhook API). The message is always:
+
+`use the hevy-workout-analysis skill and analyze my last workout`
+
+Nothing is posted when the URL is unset or blank, when the Hevy sync fails, or when `/sync` runs.
 
 ```bash
 curl -X POST http://localhost:3000/webhook \
